@@ -1,5 +1,5 @@
 import sagemaker
-from sagemaker.processing import Processor, ProcessingInput, ProcessingOutput
+from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
 from sagemaker.xgboost import XGBoost
 from sagemaker.inputs import TrainingInput
 import boto3
@@ -27,21 +27,19 @@ def get_instance_role():
     return role_arn
 
 # Initialize SageMaker session and role
-sagemaker_session = sagemaker.Session()
-
+sagemaker_session = sagemaker.Session(boto_session=boto3.Session(region_name="us-east-1"))
 role = get_instance_role()
 print(f"Using role: {role}")
-# role = sagemaker.get_execution_role()
-# role = "arn:aws:iam::<account-id>:role/ChurnPredictionEC2Role"  # Replace <account-id> with your AWS account ID
 bucket = "churn-prediction-pipeline"
 prefix = "telco-customer-churn"
 
 # Step 1: Preprocess data with SageMaker Processing
-processor = Processor(
+processor = ScriptProcessor(
     image_uri=sagemaker.image_uris.retrieve("sklearn", sagemaker_session.boto_region_name, "0.23-1"),
     role=role,
     instance_count=1,
     instance_type="ml.t3.medium",
+    command=["python3"],
     sagemaker_session=sagemaker_session
 )
 
