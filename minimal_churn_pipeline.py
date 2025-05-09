@@ -184,7 +184,7 @@ image_uri = sagemaker.image_uris.retrieve(
     version="1.5-1",
     instance_type="ml.m5.xlarge"
 )
-model_data = step_tune.get_top_model_s3_uri(top_k=0, s3_bucket=bucket)
+model_data=step_tune.get_top_model_s3_uri(top_k=0, s3_bucket=bucket).to_string()
 
 # Use RegisterModel from sagemaker.model instead
 step_register_model = RegisterModel(
@@ -262,7 +262,7 @@ step_evaluate = ProcessingStep(
             destination="/opt/ml/processing/model"
         ),
         ProcessingInput(
-            source=step_process.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri,
+            source=step_process.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri.to_string(),
             destination="/opt/ml/processing/test"
         )
     ],
@@ -311,14 +311,3 @@ try:
     print(f"Pipeline execution ARN: {execution.arn}")
 except Exception as e:
     print(f"Pipeline execution failed: {str(e)}")
-
-# Define and execute partial pipeline
-partial_pipeline = Pipeline(
-    name="TuningOnlyPipeline",
-    steps=[step_tune],
-    sagemaker_session=sagemaker_session
-)
-
-# Execute the partial pipeline
-partial_pipeline.upsert(role_arn=role)
-execution = partial_pipeline.start()
