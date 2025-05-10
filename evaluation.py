@@ -4,6 +4,8 @@ import numpy as np
 import xgboost as xgb
 import json
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+from sagemaker.workflow.steps import EndpointConfigStep
+from sagemaker.workflow.steps import EndpointStep
 
 # Load test data
 test_data = pd.read_csv('/opt/ml/processing/test/test.csv')

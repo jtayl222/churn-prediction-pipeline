@@ -12,6 +12,8 @@ from sagemaker.workflow.conditions import ConditionGreaterThanOrEqualTo
 from sagemaker.workflow.condition_step import ConditionStep
 from sagemaker.workflow.properties import PropertyFile
 from sagemaker.workflow.step_collections import RegisterModel
+from stepfunctions.steps.sagemaker import EndpointConfigStep, EndpointStep
+from sagemaker.workflow.fail_step import FailStep    # add this import
 import boto3
 import os
 
@@ -94,7 +96,8 @@ xgb_estimator = XGBoost(
     hyperparameters={
         "objective": "binary:logistic",
         "num_round": 100
-    }
+    },
+    output_path=f"s3://{bucket}/{prefix}/hpo"    # <-- move output_path here
 )
 
 xgb_script = """
@@ -178,17 +181,15 @@ step_tune = TuningStep(
 )
 
 # Step 3: Create and register model
-image_uri = sagemaker.image_uris.retrieve(
-    framework="xgboost",
-    region=sagemaker_session.boto_region_name,
-    version="1.5-1",
-    instance_type="ml.m5.xlarge"
-)
-model_data=step_tune.get_top_model_s3_uri(top_k=0, s3_bucket=bucket).to_string()
+model_data = step_tune.get_top_model_s3_uri(
+    top_k=0,
+    s3_bucket=bucket,
+    prefix="telco-customer-churn/hpo"  # Add the correct prefix here
+).to_string()
 
-# Use RegisterModel from sagemaker.model instead
+# Change the name to distinguish from any RegisterModel subcomponent
 step_register_model = RegisterModel(
-    name="RegisterModel",
+    name="UniqueModelPackageRegistrationStep", # <--- Further revised for uniqueness
     estimator=xgb_estimator,
     model_data=model_data,
     content_types=["text/csv"],
@@ -215,6 +216,8 @@ import numpy as np
 import xgboost as xgb
 import json
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+from sagemaker.workflow.steps import EndpointConfigStep
+from sagemaker.workflow.steps import EndpointStep
 
 # Load test data
 test_data = pd.read_csv('/opt/ml/processing/test/test.csv')
@@ -258,7 +261,7 @@ step_evaluate = ProcessingStep(
     processor=evaluation_processor,
     inputs=[
         ProcessingInput(
-            source=step_tune.get_top_model_s3_uri(top_k=0, s3_bucket=bucket),
+            source=step_tune.get_top_model_s3_uri(top_k=0, s3_bucket=bucket),  # add s3_bucket
             destination="/opt/ml/processing/model"
         ),
         ProcessingInput(
@@ -277,6 +280,37 @@ step_evaluate = ProcessingStep(
     property_files=[evaluation_report]  # Include property_files here
 )
 
+# Create model step with a unique name that doesn't conflict
+step_create_model = CreateModelStep(
+    name="UniqueConditionalModelCreationStep", # <--- Further revised for uniqueness
+    model=Model(
+        image_uri=sagemaker.image_uris.retrieve(
+            framework="xgboost",
+            region=sagemaker_session.boto_region_name,
+            version="1.5-1"
+        ),
+        model_data=step_tune.get_top_model_s3_uri(top_k=0, s3_bucket=bucket).to_string(),
+        role=role,
+        sagemaker_session=sagemaker_session
+    )
+)
+
+# Endpoint configuration step
+step_endpoint_config = EndpointConfigStep(
+    state_id="CreateEndpointConfig", # This is a state_id, not a pipeline step 'name'
+    endpoint_config_name="ChurnPredictionEndpointConfig",
+    model_name=step_create_model.properties.ModelName, # This will refer to "UniqueConditionalModelCreationStep"
+    initial_instance_count=1,
+    instance_type="ml.t2.medium"
+)
+
+# Endpoint step
+step_endpoint = EndpointStep(
+    state_id="CreateEndpoint", # This is a state_id
+    endpoint_name="ChurnPredictionEndpoint",
+    endpoint_config_name="ChurnPredictionEndpointConfig"
+)
+
 # Condition step for model accuracy - Use JsonGet to access property
 cond_auc = ConditionGreaterThanOrEqualTo(
     left=JsonGet(
@@ -287,19 +321,31 @@ cond_auc = ConditionGreaterThanOrEqualTo(
     right=0.8
 )
 
+# Define a failure step for the else branch
+step_fail = FailStep(
+    name="FailDeployment",
+    error_message="Model AUC below 0.8 – skipping endpoint deployment.",
+)
+
 # Deploy endpoint if condition is met
 step_deploy = ConditionStep(
     name="DeployModelIfAucAboveThreshold",
     conditions=[cond_auc],
-    if_steps=[],  # Add deployment steps here
-    else_steps=[]
+    if_steps=[step_create_model, step_endpoint_config, step_endpoint],
+    else_steps=[step_fail]
 )
 
 # Step 5: Define and Execute Pipeline
 pipeline_name = "ChurnPredictionPipeline"
 pipeline = Pipeline(
     name=pipeline_name,
-    steps=[step_process, step_tune, step_register_model, step_evaluate, step_deploy],
+    steps=[
+        step_process,
+        step_tune,
+        step_register_model, # Name is now "UniqueModelPackageRegistrationStep"
+        step_evaluate,
+        # step_deploy
+    ],
     sagemaker_session=sagemaker_session
 )
 

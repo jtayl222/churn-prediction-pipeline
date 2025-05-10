@@ -59,9 +59,13 @@ $ git clone git@github.com:jtayl222/churn-prediction-pipeline.git
 ## Setup
 
 1. **Set Up CloudWatch Monitoring**:
-   * Create SNS Topic
-      * https://us-east-1.console.aws.amazon.com/sns/v3/home?region=us-east-1#/homepage 
-      * PipelineFailureTopic
+   ```bash
+   aws sns create-topic --name PipelineFailureTopic --region us-east-1
+   
+   aws sns subscribe --topic-arn arn:aws:sns:us-east-1:913524944914:PipelineFailureTopic --protocol email --notification-endpoint your-email@example.com --region us-east-1
+   ```
+
+1. **Create CloudWatch Alarm**:
 
    ```bash
    # arn:aws:sns:<region>:<account-id>:<topic-name>
@@ -82,7 +86,7 @@ $ git clone git@github.com:jtayl222/churn-prediction-pipeline.git
    python3 -m venv sagemaker_env
    source sagemaker_env/bin/activate
    pip install --upgrade pip
-   pip install sagemaker boto3
+   pip install -r requirements.txt
    ```
 
 3. **Verify Credentials**:
@@ -95,6 +99,25 @@ $ git clone git@github.com:jtayl222/churn-prediction-pipeline.git
    ```bash
    rm ~/.aws/credentials ~/.aws/config
    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+   ```
+
+## Upload Data to S3
+
+Before running the pipeline, ensure the dataset is uploaded to the designated S3 bucket. In the AWS console, create S3 bucket "churn-prediction-pipeline", the use the provided script `cp-data-to-s3/upload_to_s3.py` to automate this process. This script simplifies the process of uploading the dataset to S3, ensuring the pipeline has access to the required data.
+
+### Steps:
+
+1. **Set Up Environment**:
+   Ensure you have the required AWS credentials and permissions to upload data to S3.
+
+1. **Run the Script**:
+   ```bash
+   python3 cp-data-to-s3/upload_to_s3.py 
+   ```
+
+1. Verify Upload: Check if the file is successfully uploaded:
+   ```bash
+   aws s3 ls s3://churn-prediction-pipeline/telco-customer-churn/
    ```
 
 ## Running the Script
@@ -121,12 +144,7 @@ $ git clone git@github.com:jtayl222/churn-prediction-pipeline.git
 - **Preprocessing**: Uses `ScriptProcessor` to clean the Telco Churn dataset, encode categorical variables, and split into train/test sets.
 - **Training**: Trains an XGBoost model with fixed hyperparameters using SageMaker’s managed training.
 
-## Next Steps
 
-- Deploy the trained model to a SageMaker endpoint for inference.
-- Add hyperparameter tuning with `HyperparameterTuner`.
-- Implement a SageMaker Pipeline with `ProcessingStep`, `TrainingStep`, and `ModelStep`.
-- Add monitoring with CloudWatch alarms.
 
 ## Cost Management
 
