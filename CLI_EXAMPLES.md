@@ -72,4 +72,7 @@ aws iam list-attached-role-policies --role-name ChurnPredictionEC2Role --region 
 aws iam list-role-policies --role-name ChurnPredictionEC2Role --region us-east-1
 aws iam  get-role-policy --role-name ChurnPredictionEC2Role --region us-east-1 --policy-name SageMakerModelRegistryPolicy
 
+#######
+aws logs describe-log-streams --log-group-name /aws/sagemaker/ProcessingJobs  --order-by LastEventTime --descending  --max-items 1
+aws logs get-log-events --log-group-name /aws/sagemaker/ProcessingJobs --log-stream-name pipelines-hd1ew8n7jr17-EvaluateModel-OxEiQ6lREC/algo-1-1746921595
 ```
