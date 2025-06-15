@@ -1,225 +1,170 @@
-# Telco Customer Churn Prediction with SageMaker
+# 📈 Churn Prediction Pipeline
 
-This project uses Amazon SageMaker to build a machine learning pipeline for predicting customer churn using the Telco Customer Churn dataset. The initial implementation focuses on preprocessing the dataset and training an XGBoost model.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jtayl222/assets/main/logos/mlops_churn.svg" width="350" alt="Churn Pipeline"/>
+</p>
 
-## SET UP
+> **TL;DR** – This repo shows how to turn a single CSV file into a production‑ready, continuously‑deployed ML service.  It is the *starting point* for the fully automated Argo workflow in [`churn-prediction-pipeline-ArgoWF`](https://github.com/jtayl222/churn-prediction-pipeline-ArgoWF) and plugs directly into the K3s cluster defined in [`k3s-homelab`](https://github.com/jtayl222/k3s-homelab).
 
-```bash
-# EC2 Public IPv4 address
-REMOTE_IP=34.203.200.200
+> **⚠️ Work in Progress** – This is an active demonstration project showcasing MLOps patterns. While functional, it's continuously evolving to incorporate production-grade features. See [Development Roadmap](#development-roadmap) for planned improvements.
 
-# REMOTE SHELL
-$ ssh -i ~/.ssh/ec2-churn-prediction-pipeline.pem ec2-user@@REMOTE_IP
+---
 
-# REMOTE COPY EXAMPLE
-$ scp -i ~/.ssh/ec2-churn-prediction-pipeline.pem churn_prediction_pipeline.py ec2-user@REMOTE_IP:~/churn_prediction_pipeline.py
+## 1. Why this project matters
 
-# FOR VS-CODE REMOTE SSH
-$ cat ~/.ssh/config 
-Host EC2 Churn Prediction
-  HostName 34.203.200.200
-  User ec2-user
-  IdentityFile ~/.ssh/ec2-churn-prediction-pipeline.pem
-  Port 22
+Recruiters look for **evidence** that you can ship ML to production, not just train notebooks.  This repo demonstrates:
 
-# GIT CLONE in REMOTE SHELL
-$ ssh-keygen -t rsa
-$ cat ~/.ssh/id_rsa.pub # copy this key to https://github.com/settings/keys
-$ sudo yum install git
-$ git clone git@github.com:jtayl222/churn-prediction-pipeline.git
+* **Reproducible data & code** – deterministic preprocessing, version‑pinned dependencies, and optional DVC storage so every experiment can be replayed.
+* **CI/CD for models** – GitHub Actions tests the pipeline and pushes an OCI image to GHCR on every PR.
+* **Cloud + On‑Prem parity** – the exact training script runs unmodified in AWS SageMaker **or** on a local K3s cluster.
+* **Observability & governance** – built‑in MLflow tracking and Prometheus metrics exported by Seldon Core (see Next Steps).
+
+For the big picture, read my Medium story:
+➡️ [*From DevOps to MLOps: Why Employers Care and How I Built a Fortune 500 Stack in My Spare Bedroom*](https://jeftaylo.medium.com/from-devops-to-mlops-why-employers-care-and-how-i-built-a-fortune-500-stack-in-my-spare-bedroom-ce0d06dd3c61)
+
+---
+
+## 2. High‑level architecture
+
+```mermaid
+flowchart LR
+    subgraph AWS[SageMaker]
+        S3[(Telco Churn CSV)] --> PreProcess
+        PreProcess((Processing Job)) --> Train
+        Train((XGBoost Training)) --> ModelArtifacts>model.tar.gz]
+    end
+    ModelArtifacts --> |"build & push"| Kaniko{{Kaniko}}
+    Kaniko --> |"registries"| ECR[(ECR / GHCR)]
+    ECR --> |"deploy"| Seldon>>Seldon Core<<
+    Seldon --> |"/predict"| Users[[Call API]]
+    Seldon --> |"metrics"| Prometheus
+    Prometheus --> Grafana
 ```
 
+*Need a Kubernetes‑native workflow?* Jump to the Argo version ➡️ [`churn-prediction-pipeline-ArgoWF`](https://github.com/jtayl222/churn-prediction-pipeline-ArgoWF).
 
-## Prerequisites
+---
 
-- **EC2 Instance**: Running in `us-east-1` with `ChurnPredictionEC2Role` attached.
-- **IAM Role**: `ChurnPredictionEC2Role` with:
-  - Policies: `AmazonS3FullAccess`, `AmazonSageMakerFullAccess`, `AWSLambda_FullAccess`, `CloudWatchFullAccess`, and a custom `iam:PassRole` policy.
-  - Trust policy:
-    ```json
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Principal": {
-                    "Service": [
-                        "ec2.amazonaws.com",
-                        "sagemaker.amazonaws.com"
-                    ]
-                },
-                "Action": "sts:AssumeRole"
-            }
-        ]
-    }
-    ```
-- **S3 Bucket**: `churn-prediction-pipeline` containing the dataset at `s3://churn-prediction-pipeline/telco-customer-churn/WA_Fn-UseC_-Telco-Customer-Churn.csv`.
-- **Python Environment**: Virtual environment with SageMaker SDK (`sagemaker>=2.100.0`).
+## 3. Quick Start
 
-## Setup
+### 3.1 Local (no AWS account required)
 
-1. **Set Up CloudWatch Monitoring**:
-   ```bash
-   aws sns create-topic --name PipelineFailureTopic --region us-east-1
-   
-   aws sns subscribe --topic-arn arn:aws:sns:us-east-1:913524944914:PipelineFailureTopic --protocol email --notification-endpoint your-email@example.com --region us-east-1
-   ```
+```bash
+# 1 — Clone
+$ git clone https://github.com/jtayl222/churn-prediction-pipeline.git && cd churn-prediction-pipeline
 
-1. **Create CloudWatch Alarm**:
+# 2 — Create env
+$ python -m venv .venv && source .venv/bin/activate
+$ pip install -r requirements.txt
 
-   ```bash
-   # arn:aws:sns:<region>:<account-id>:<topic-name>
-   export SNS_TOPIC_ARN=arn:aws:sns:us-east-1:913524944914:PipelineFailureTopic
-   
-   aws cloudwatch put-metric-alarm --alarm-name PipelineFailure --metric-name PipelineExecutionStatus --namespace AWS/SageMaker --threshold 1 --comparison-operator GreaterThanThreshold --evaluation-periods 1 --period 300 --statistic Maximum --alarm-actions $SNS_TOPIC_ARN --region us-east-1
-   ```
+# 3 — Run minimal pipeline
+$ python minimal_churn_pipeline.py  
+# → outputs metrics to ./artifacts and MLflow (if MLFLOW_TRACKING_URI is set)
+```
 
-1. **Launch EC2 Instance**:
-   - Use `us-east-1`, attach `ChurnPredictionEC2Role`, and enable IMDSv2.
-   - SSH into the instance:
-     ```bash
-     ssh -i <key.pem> ec2-user@<instance-public-ip>
-     ```
+### 3.2 AWS SageMaker
 
-2. **Set Up Environment**:
-   ```bash
-   python3 -m venv sagemaker_env
-   source sagemaker_env/bin/activate
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+```bash
+# upload data
+aws s3 cp data/WA_Fn-UseC_-Telco-Customer-Churn.csv s3://$S3_BUCKET/telco.csv
 
-3. **Verify Credentials**:
-   ```bash
-   aws sts get-caller-identity
-   ```
-   Expected: ARN includes `ChurnPredictionEC2Role`.
+# kick off pipeline
+python churn_prediction_pipeline.py \
+  --s3-bucket $S3_BUCKET \
+  --role-arn  arn:aws:iam::$ACCOUNT:role/ChurnPredictionEC2Role
+```
 
-4. **Remove User Credentials** (if present):
-   ```bash
-   rm ~/.aws/credentials ~/.aws/config
-   unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
-   ```
+> **Cost tip:** Processing + single‑instance training ≈ **\$0.70/run** on spot instances.
 
-## Upload Data to S3
+---
 
-Before running the pipeline, ensure the dataset is uploaded to the designated S3 bucket. In the AWS console, create S3 bucket "churn-prediction-pipeline", the use the provided script `cp-data-to-s3/upload_to_s3.py` to automate this process. This script simplifies the process of uploading the dataset to S3, ensuring the pipeline has access to the required data.
+## 4. Repository layout
 
-### Steps:
+```text
+.
+├── data/                  # raw dataset (small sample committed; full set fetched at runtime)
+├── scripts/               # helper utilities (upload_to_s3, evaluation)
+├── iac/                   # Terraform for IAM + S3 boilerplate
+├── churn_prediction_pipeline.py   # SageMaker pipeline definition
+├── minimal_churn_pipeline.py      # pure‑python reference
+└── requirements.txt
+```
 
-1. **Set Up Environment**:
-   Ensure you have the required AWS credentials and permissions to upload data to S3.
+---
 
-1. **Run the Script**:
-   ```bash
-   python3 cp-data-to-s3/upload_to_s3.py 
-   ```
+## 5. Next Steps & Development Roadmap
 
-1. Verify Upload: Check if the file is successfully uploaded:
-   ```bash
-   aws s3 ls s3://churn-prediction-pipeline/telco-customer-churn/
-   ```
+### 5.1 Immediate Extensions
+| Goal                         | Repository                                                                                                                                                |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🐳 **Containerize model**    | [`churn-prediction-pipeline-ArgoWF`](https://github.com/jtayl222/churn-prediction-pipeline-ArgoWF) uses **Kaniko** to build OCI images inside the cluster |
+| ☁️ **Deploy on K3s homelab** | [`k3s-homelab`](https://github.com/jtayl222/k3s-homelab) provisions a 5‑node cluster with MetalLB & Longhorn                                              |
+| 🎛 **End‑to‑end demo**       | [`homelab-mlops-demo`](https://github.com/jtayl222/homelab-mlops-demo) walks through training ➜ serving ➜ monitoring                                      |
+| 📊 **Dashboards & alerts**   | Grafana JSON & Alertmanager rules in `homelab-mlops-demo/grafana/`                                                                                        |
 
-## Running the Script
+### 5.2 Production Readiness (Planned)
+#### 🔒 **Security & Compliance**
+- [ ] IAM roles with least-privilege principles
+- [ ] Secrets management with AWS Secrets Manager / K8s secrets
+- [ ] Network policies and VPC security groups
+- [ ] Container image vulnerability scanning
+- [ ] Data encryption at rest and in transit
 
-1. **Upload Script**:
-   ```bash
-   scp -i <key.pem> simple_churn_prediction.py ec2-user@<instance-public-ip>:~/sagemaker_env/
-   ```
+#### 🧪 **Testing & Quality Assurance**
+- [ ] **Unit Tests**: `pytest` suite for preprocessing and evaluation logic
+- [ ] **Integration Tests**: End-to-end pipeline validation with test data
+- [ ] **Model Tests**: Bias detection, performance regression, data drift tests
+- [ ] **Infrastructure Tests**: Terraform validation, K8s resource health checks
+- [ ] **Load Testing**: Performance benchmarks for inference endpoints
 
-2. **Run**:
-   ```bash
-   cd ~/sagemaker_env
-   source sagemaker_env/bin/activate
-   python3 simple_churn_prediction.py
-   ```
+#### 📊 **Observability & Monitoring**
+- [ ] **SLIs/SLOs**: Define service level indicators (latency, accuracy, uptime)
+- [ ] **Alerting Runbooks**: Automated incident response procedures
+- [ ] **Distributed Tracing**: Request flow tracking across microservices
+- [ ] **Log Aggregation**: Centralized logging with structured formats
+- [ ] **Capacity Planning**: Auto-scaling based on traffic patterns
 
-3. **Outputs**:
-   - Preprocessed data: `s3://churn-prediction-pipeline/telco-customer-churn/output/train/` and `test/`.
-   - Model artifacts: `s3://sagemaker-us-east-1-913524944914/churn-training-ec2-user/output/model.tar.gz`.
-   - Check SageMaker Console → Processing Jobs and Training Jobs.
+#### 🏗️ **Performance & Scale**
+- [ ] **Throughput Optimization**: Handle 10K+ requests/second
+- [ ] **Cost Management**: Spot instances, resource right-sizing, auto-scaling
+- [ ] **Data Pipeline Scale**: Process TB-scale datasets efficiently
+- [ ] **Streaming Integration**: Real-time inference with Kafka/Kinesis
+- [ ] **Multi-region Deployment**: Geographic load distribution
 
-## Current Functionality
+#### 🔄 **Data & Model Governance**
+- [ ] **Schema Evolution**: Backward-compatible data format changes
+- [ ] **Data Lineage**: Track data provenance and transformations
+- [ ] **Model Versioning**: A/B testing and gradual rollout strategies
+- [ ] **Compliance Auditing**: GDPR, SOX, regulatory reporting
+- [ ] **Automated Retraining**: Drift detection and model refresh triggers
 
-- **Preprocessing**: Uses `ScriptProcessor` to clean the Telco Churn dataset, encode categorical variables, and split into train/test sets.
-- **Training**: Trains an XGBoost model with fixed hyperparameters using SageMaker’s managed training.
+#### 🚨 **Incident Response**
+- [ ] **Rollback Procedures**: Automated model version reversion
+- [ ] **Debugging Guides**: Systematic troubleshooting workflows
+- [ ] **Disaster Recovery**: Cross-region backup and failover
+- [ ] **Change Management**: Approval workflows for production changes
+- [ ] **Post-mortem Templates**: Structured incident analysis
 
+---
 
+## 6. Contributing
 
-## Cost Management
+Pull requests are welcome!  See [CONTRIBUTING.md](CONTRIBUTING.md) *(coming soon)* for coding standards and how to run the pre‑commit hooks.
 
-### Monitor AWS Billing for EC2, SageMaker Processing, and Training costs.
+**Current Development Focus:**
+- Improving test coverage for preprocessing logic
+- Adding model drift detection capabilities
+- Implementing automated security scanning
+- Documentation for production deployment patterns
 
-1. Environment:
-   ```bash
-   # Adjust for your environment
-   export INSTANCE_ID=i-0bafe0043c71493cd
-   ```
+---
 
-1. Start EC2 (if stopped):
-   ```bash
-   aws ec2 start-instances --instance-ids $INSTANCE_ID --region us-east-1
-   ```
+## 7. License
 
-1. Stop EC2 When Done:
-   ```bash
-   aws ec2 stop-instances --instance-ids $INSTANCE_ID --region us-east-1
-   ```
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
-1. Check Endpoints:
-   ```bash
-   aws sagemaker list-endpoints --region us-east-1
-   ```
+---
 
-1. Delete churn-prediction-endpoint if present:
-   ```bash
-   aws sagemaker delete-endpoint --endpoint-name churn-prediction-endpoint --region us-east-1
-   ```
+## 8. Acknowledgments
 
-1. Monitor Jobs:
-   ```bash
-   aws sagemaker list-processing-jobs --region us-east-1 --status-equals InProgress
-   aws sagemaker list-training-jobs --region us-east-1 --status-equals InProgress
-   aws sagemaker list-hyper-parameter-tuning-jobs --region us-east-1 --status-equals InProgress
-   ```
-    
-1. Cost Estimate:
-
-* Preprocessing: ml.t3.medium (~$0.05 for ~5 minutes).
-* Tuning: 3 jobs on ml.m5.xlarge (~$0.20 each, ~$0.60 total).
-* Evaluation: ml.t3.medium (~$0.05).
-* EC2: t3.medium (~$0.04/hour).
-* Total per run: ~$0.70, plus EC2.
-
-## Troubleshooting
-
-1. Check Logs:
-   * SageMaker Console → Pipelines → ChurnPredictionPipeline → Executions.
-   * Tuning job: SageMaker Console → Training → Hyperparameter tuning jobs → <TuneModel-job-name>.
-
-1. Verify Inputs:
-   ```bash
-   aws s3 ls s3://churn-prediction-pipeline/telco-customer-churn/output/
-   ```
-
-1. IAM:
-   ```bash
-   # Ensure ChurnPredictionEC2Role has AmazonSageMakerFullAccess, AmazonS3FullAccess.
-   aws sts get-caller-identity
-   ```
-
-1. Validation File:
-
-   * Check if /opt/ml/input/data/validation/test.csv is accessed correctly in xgboost_script.py.
-
-1.  **IAM Issues**: Verify `ChurnPredictionEC2Role` permissions and trust policy.
-
-1.  **S3 Access**: Ensure `AmazonS3FullAccess` is attached.
-
-1.  **Logs**: Check SageMaker Console → Processing/Training Jobs → View logs.
-
-1.  **SDK Version**:
-   ```bash
-   pip show sagemaker
-   pip install --upgrade sagemaker
-   ```
+This project is part of a broader MLOps learning initiative. While designed for demonstration purposes, it incorporates real-world patterns used in production environments. Feedback and contributions help improve its educational value
