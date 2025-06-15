@@ -27,18 +27,30 @@ For the big picture, read my Medium story:
 ## 2. High‑level architecture
 
 ```mermaid
-flowchart LR
-    subgraph AWS[SageMaker]
+flowchart TD
+    subgraph AWS[SageMaker Pipeline]
         S3[(Telco Churn CSV)] --> PreProcess
-        PreProcess((Processing Job)) --> Train
-        Train((XGBoost Training)) --> ModelArtifacts>model.tar.gz]
+        PreProcess((PreprocessData<br/>Processing Job)) --> Train
+        PreProcess --> |test data| Evaluate
+        Train((TuneModel<br/>Hyperparameter Tuning)) --> Register
+        Train --> |best model| Evaluate
+        Register[UniqueModelPackageRegistrationStep<br/>Model Registry] 
+        Evaluate((EvaluateModel<br/>Processing Job)) --> Condition
+        Condition{AUC >= 0.8?}
+        Condition --> |Yes| CreateModel[UniqueConditionalModelCreationStep]
+        Condition --> |No| Fail[FailDeployment]
+        CreateModel --> EndpointConfig[CreateEndpointConfig]
+        EndpointConfig --> Endpoint[CreateEndpoint]
     end
-    ModelArtifacts --> |"build & push"| Kaniko{{Kaniko}}
-    Kaniko --> |"registries"| ECR[(ECR / GHCR)]
-    ECR --> |"deploy"| Seldon>>Seldon Core<<
-    Seldon --> |"/predict"| Users[[Call API]]
-    Seldon --> |"metrics"| Prometheus
-    Prometheus --> Grafana
+    
+    subgraph "Next Steps (Other Repos)"
+        Endpoint --> |future| Kaniko{{Kaniko}}
+        Kaniko --> ECR[(ECR / GHCR)]
+        ECR --> Seldon[Seldon Core]
+        Seldon --> Users[API Users]
+        Seldon --> Prometheus[Prometheus]
+        Prometheus --> Grafana[Grafana]
+    end
 ```
 
 *Need a Kubernetes‑native workflow?* Jump to the Argo version ➡️ [`churn-prediction-pipeline-ArgoWF`](https://github.com/jtayl222/churn-prediction-pipeline-ArgoWF).
