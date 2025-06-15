@@ -1,7 +1,7 @@
 # 📈 Churn Prediction Pipeline
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jtayl222/assets/main/logos/mlops_churn.svg" width="350" alt="Churn Pipeline"/>
+  <img src="https://raw.githubusercontent.com/jtayl222/assets/main/logos/mlops_churn.svg" width="350" alt="Churn Prediction Pipeline Logo"/>
 </p>
 
 > **TL;DR** – This repo shows how to turn a single CSV file into a production‑ready, continuously‑deployed ML service.  It is the *starting point* for the fully automated Argo workflow in [`churn-prediction-pipeline-ArgoWF`](https://github.com/jtayl222/churn-prediction-pipeline-ArgoWF) and plugs directly into the K3s cluster defined in [`k3s-homelab`](https://github.com/jtayl222/k3s-homelab).
@@ -18,6 +18,8 @@ Recruiters look for **evidence** that you can ship ML to production, not just tr
 * **CI/CD for models** – GitHub Actions tests the pipeline and pushes an OCI image to GHCR on every PR.
 * **Cloud + On‑Prem parity** – the exact training script runs unmodified in AWS SageMaker **or** on a local K3s cluster.
 * **Observability & governance** – built‑in MLflow tracking and Prometheus metrics exported by Seldon Core (see Next Steps).
+
+A $100+/month bill from a forgotten SageMaker MLflow instance drove me to build a cost-effective K3s homelab, detailed in my Medium series.
 
 For the big picture, read my Medium story:
 ➡️ [*From DevOps to MLOps: Why Employers Care and How I Built a Fortune 500 Stack in My Spare Bedroom*](https://jeftaylo.medium.com/from-devops-to-mlops-why-employers-care-and-how-i-built-a-fortune-500-stack-in-my-spare-bedroom-ce0d06dd3c61)
@@ -53,7 +55,7 @@ flowchart TD
     end
 ```
 
-*Need a Kubernetes‑native workflow?* Jump to the Argo version ➡️ [`churn-prediction-pipeline-ArgoWF`](https://github.com/jtayl222/churn-prediction-pipeline-ArgoWF).
+*Need a Kubernetes-native workflow?* Jump to the Argo version ➡️ [`churn-prediction-pipeline-ArgoWF`](https://github.com/jtayl222/churn-prediction-pipeline-ArgoWF), running on Kubernetes K3s ([`k3s-homelab`](https://github.com/jtayl222/k3s-homelab)).
 
 ---
 
@@ -149,6 +151,7 @@ python churn_prediction_pipeline.py \
 - [ ] **Model Versioning**: A/B testing and gradual rollout strategies
 - [ ] **Compliance Auditing**: GDPR, SOX, regulatory reporting
 - [ ] **Automated Retraining**: Drift detection and model refresh triggers
+- [ ] **Workflow Comparison**: Evaluate SageMaker Step Functions vs. Argo Workflows for cost, flexibility, and scalability (planned blog post)
 
 #### 🚨 **Incident Response**
 - [ ] **Rollback Procedures**: Automated model version reversion
